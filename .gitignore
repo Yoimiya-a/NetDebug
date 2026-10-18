@@ -1,0 +1,6 @@
+win11/bin/
+win11/obj/
+service/build/
+.vs/
+.vscode/
+*.user

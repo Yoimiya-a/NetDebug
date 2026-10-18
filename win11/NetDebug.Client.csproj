@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- 在 win11 目录执行: dotnet build -c Release -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>NetDebug</RootNamespace>
+    <AssemblyName>NetDebug</AssemblyName>
+    <Version>1.0.0</Version>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <AppendRuntimeIdentifierToOutputPath>false</AppendRuntimeIdentifierToOutputPath>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>embedded</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+  </PropertyGroup>
+
+  <!-- 编译结束后把 dll 和 json 打进 exe，输出目录只留 NetDebug.exe。 -->
+  <Target Name="BundleSingleExe" AfterTargets="Build" Condition="'$(DesignTimeBuild)' != 'true' AND '$(SingleFileBundlePass)' != 'true'">
+    <PropertyGroup>
+      <_DotNetHost>$(DOTNET_HOST_PATH)</_DotNetHost>
+      <_BundleDir>$([MSBuild]::NormalizeDirectory($(OutputPath)))</_BundleDir>
+      <_BundleOut>$([System.IO.Path]::TrimEndingDirectorySeparator($(_BundleDir)))</_BundleOut>
+    </PropertyGroup>
+    <Exec Command="&quot;$(_DotNetHost)&quot; publish &quot;$(MSBuildProjectFullPath)&quot; -c $(Configuration) -r $(RuntimeIdentifier) --no-build -o &quot;$(_BundleOut)&quot; -p:SingleFileBundlePass=true -p:DebugSymbols=false -p:CopyOutputSymbolsToPublishDirectory=false" />
+    <ItemGroup>
+      <_LooseOutput Include="$(_BundleDir)*" Exclude="$(_BundleDir)$(AssemblyName).exe" />
+    </ItemGroup>
+    <Delete Files="@(_LooseOutput)" />
+    <RemoveDir Directories="$(_BundleDir)win-x64;$(_BundleDir)publish" />
+    <Error Condition="!Exists('$(_BundleDir)$(AssemblyName).exe')" Text="单个 exe 没有生成。" />
+  </Target>
+</Project>

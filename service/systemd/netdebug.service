@@ -1,0 +1,20 @@
+# 安装或更新请运行 service/install.sh。
+# 登录界面请选 Ubuntu on Xorg。登录进桌面后才会有画面。
+# 口令在 ~/.config/netdebug/config.ini ，首次启动会自动生成，默认 netdebug。
+# 若安装前缀不是 /usr/local，请修改下面的 ExecStart。
+
+[Unit]
+Description=NetDebug remote desktop host
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/netdebug-service
+Restart=on-failure
+RestartSec=2
+StartLimitIntervalSec=30
+StartLimitBurst=5
+
+[Install]
+WantedBy=graphical-session.target

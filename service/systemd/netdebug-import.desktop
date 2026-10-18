@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=NetDebug Session Import
+Comment=把 DISPLAY 和 XAUTHORITY 交给用户服务
+Exec=systemctl --user import-environment DISPLAY XAUTHORITY && systemctl --user restart netdebug.service
+X-GNOME-Autostart-enabled=true
+NoDisplay=true
