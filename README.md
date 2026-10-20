@@ -56,9 +56,13 @@ download_dir=
 
 `download_dir` 留空时，文件传输从 `~/Downloads` 开始。连上之后可以在客户端里切换目录。
 
+## 下载客户端
+
+Windows 控制端不用自己编译，到 [Releases](https://github.com/Yoimiya-a/NetDebug/releases) 下载对应版本的 `NetDebug.exe`。当前版本是 [v0.2](https://github.com/Yoimiya-a/NetDebug/releases/tag/v0.2)。运行前需要本机已安装 [.NET 8 桌面运行时](https://dotnet.microsoft.com/download/dotnet/8.0)。
+
 ## 编译控制端
 
-在 Windows 上安装 .NET 8 SDK 后：
+需要改客户端时，在 Windows 上安装 .NET 8 SDK 后：
 
 ```bash
 dotnet build -c Release win11/NetDebug.Client.csproj
