@@ -18,7 +18,9 @@
         </StackPanel>
         <WrapPanel VerticalAlignment="Center">
           <Label Content="地址"/>
-          <TextBox x:Name="HostBox" Width="160" Margin="0,0,8,0" ToolTip="Ubuntu 的 IP"/>
+          <ComboBox x:Name="HostBox" Width="170" IsEditable="True" IsReadOnly="False"
+                    Margin="0,0,8,0" ToolTip="找到一台会自动填入。多台时点开此框选择"/>
+          <Button x:Name="SearchButton" Content="搜索" Click="Search_Click" Margin="0,0,8,0" ToolTip="在局域网里查找 NetDebug"/>
           <Label Content="端口"/>
           <TextBox x:Name="PortBox" Width="70" Margin="0,0,8,0" Text="17611"/>
           <Label Content="密码"/>

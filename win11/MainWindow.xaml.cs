@@ -24,6 +24,8 @@ public partial class MainWindow : Window
 
     RemoteClient? _client;
     CancellationTokenSource? _loopCts;
+    CancellationTokenSource? _searchCts;
+    bool _searching;
     Task? _loop;
     RemoteFrame? _pendingFrame;
     int _framePosted;
@@ -67,6 +69,7 @@ public partial class MainWindow : Window
         _uiReady = true;
         UpdateBandwidth();
         UpdateUi();
+        Loaded += (_, _) => _ = SearchAsync();
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -84,6 +87,7 @@ public partial class MainWindow : Window
     {
         if (_hwnd != IntPtr.Zero) RemoveClipboardFormatListener(_hwnd);
         _loopCts?.Cancel();
+        _searchCts?.Cancel();
         _client?.Dispose();
         lock (_fileLock)
         {
@@ -93,9 +97,67 @@ public partial class MainWindow : Window
         base.OnClosed(e);
     }
 
+    void Search_Click(object sender, RoutedEventArgs e) => _ = SearchAsync();
+
+    async Task SearchAsync()
+    {
+        if (_searching || _connected || _connecting) return;
+        if (!int.TryParse(PortBox.Text.Trim(), out var port) || port is < 1 or > 65535)
+        {
+            StatusText.Text = "端口无效";
+            return;
+        }
+        _searchCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _searchCts = cts;
+        _searching = true;
+        UpdateUi();
+        var previous = StatusText.Text;
+        StatusText.Text = "正在搜索局域网";
+        try
+        {
+            var progress = new Progress<string>(text =>
+            {
+                if (_searching && !_connected && !_connecting) StatusText.Text = text;
+            });
+            var found = await LanDiscovery.FindAsync(port, progress, cts.Token);
+            if (cts.IsCancellationRequested) return;
+            var typed = HostBox.Text.Trim();
+            HostBox.ItemsSource = found;
+            if (found.Count == 1)
+            {
+                HostBox.Text = found[0];
+            }
+            else if (found.Count > 1)
+            {
+                HostBox.Text = found.Contains(typed) ? typed : "";
+                HostBox.IsDropDownOpen = true;
+            }
+            if (!_connected && !_connecting)
+                StatusText.Text = found.Count == 0 ? "没有找到设备" : $"找到 {found.Count} 台设备";
+        }
+        catch (OperationCanceledException)
+        {
+            if (!_connected && StatusText.Text.StartsWith("正在搜索")) StatusText.Text = previous;
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = ex.Message;
+        }
+        finally
+        {
+            if (ReferenceEquals(_searchCts, cts))
+            {
+                _searching = false;
+                UpdateUi();
+            }
+        }
+    }
+
     void Connect_Click(object sender, RoutedEventArgs e)
     {
         if (_loop != null) return;
+        _searchCts?.Cancel();
         var host = HostBox.Text.Trim();
         if (host.Length == 0)
         {
@@ -1126,6 +1188,7 @@ public partial class MainWindow : Window
     {
         var busy = _connecting || _connected;
         ConnectButton.IsEnabled = !busy;
+        SearchButton.IsEnabled = !busy && !_searching;
         DisconnectButton.IsEnabled = busy;
         RefreshButton.IsEnabled = _connected;
         OpenButton.IsEnabled = _connected;
