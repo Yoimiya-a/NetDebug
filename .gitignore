@@ -1,5 +1,6 @@
 win11/bin/
 win11/obj/
+win11/build/
 service/build/
 .vs/
 .vscode/

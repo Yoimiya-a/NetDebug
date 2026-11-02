@@ -10,6 +10,11 @@
 #include <arpa/inet.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <sys/ioctl.h>
+#ifndef TIOCOUTQ
+#include <linux/sockios.h>
+#define TIOCOUTQ SIOCOUTQ
+#endif
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -202,6 +207,17 @@ class Connection {
   std::filesystem::path up_path_;
   std::ofstream up_out_;
   uint32_t clip_seq_ = 0;
+  std::vector<uint8_t> base_rgb_;
+  std::vector<uint8_t> pending_rgb_;
+  int base_w_ = 0;
+  int base_h_ = 0;
+  int pending_w_ = 0;
+  int pending_h_ = 0;
+  uint8_t base_codec_ = 0;
+  uint8_t pending_codec_ = 0;
+  uint64_t base_gen_ = 0;
+  bool inflight_ = false;
+  std::chrono::steady_clock::time_point encode_log_{};
 
   void request_stop() {
     stop_.store(true);
@@ -221,15 +237,6 @@ class Connection {
     {
       std::lock_guard<std::mutex> lock(out_mu_);
       if (hi_.size() < 64) hi_.push_back(std::move(msg));
-    }
-    out_cv_.notify_one();
-  }
-
-  void publish_frame(std::vector<uint8_t> msg) {
-    {
-      std::lock_guard<std::mutex> lock(out_mu_);
-      frame_ = std::move(msg);
-      frame_ready_ = true;
     }
     out_cv_.notify_one();
   }
@@ -299,6 +306,87 @@ class Connection {
     return write_all(fd_, ndbg::pack(ndbg::AuthOk, ok));
   }
 
+  std::vector<uint8_t> build_update(tjhandle tj, const CapturedFrame& frame, const std::vector<uint8_t>& base,
+                                    int base_w, int base_h, uint8_t base_codec) {
+    const bool same_size = base_w == frame.width && base_h == frame.height && base_codec == frame.codec &&
+                           base.size() == frame.rgb.size() && !base.empty();
+    if (same_size && std::memcmp(base.data(), frame.rgb.data(), base.size()) == 0) return {};
+    if (!same_size || frame.codec != 0) return encode_frame(tj, frame, encode_log_);
+
+    constexpr int kTile = 128;
+    const int tiles_x = (frame.width + kTile - 1) / kTile;
+    const int tiles_y = (frame.height + kTile - 1) / kTile;
+    const int total = tiles_x * tiles_y;
+    struct Rect {
+      int x, y, w, h;
+    };
+    std::vector<Rect> dirty;
+    dirty.reserve(static_cast<size_t>(total));
+    for (int ty = 0; ty < tiles_y; ++ty) {
+      for (int tx = 0; tx < tiles_x; ++tx) {
+        const int x = tx * kTile;
+        const int y = ty * kTile;
+        const int w = std::min(kTile, frame.width - x);
+        const int h = std::min(kTile, frame.height - y);
+        bool changed = false;
+        for (int row = 0; row < h; ++row) {
+          const size_t off = (static_cast<size_t>(y + row) * frame.width + x) * 3;
+          if (std::memcmp(base.data() + off, frame.rgb.data() + off, static_cast<size_t>(w) * 3) != 0) {
+            changed = true;
+            break;
+          }
+        }
+        if (changed) dirty.push_back({x, y, w, h});
+      }
+    }
+    if (dirty.empty()) return {};
+    if (static_cast<int>(dirty.size()) * 5 >= total * 2) return encode_frame(tj, frame, encode_log_);
+
+    struct Piece {
+      Rect rect;
+      std::vector<uint8_t> jpeg;
+    };
+    std::vector<Piece> pieces;
+    pieces.reserve(dirty.size());
+    for (const Rect& rect : dirty) {
+      const int subsample = (rect.w % 2 == 0 && rect.h % 2 == 0) ? TJSAMP_420 : TJSAMP_444;
+      unsigned char* out = nullptr;
+      unsigned long out_size = 0;
+      const uint8_t* src = frame.rgb.data() + (static_cast<size_t>(rect.y) * frame.width + rect.x) * 3;
+      const int rc = tjCompress2(tj, src, rect.w, frame.width * 3, rect.h, TJPF_RGB, &out, &out_size, subsample,
+                                 frame.quality, TJFLAG_FASTDCT);
+      if (rc != 0 || !out || out_size == 0) {
+        if (out) tjFree(out);
+        return encode_frame(tj, frame, encode_log_);
+      }
+      pieces.push_back({rect, std::vector<uint8_t>(out, out + out_size)});
+      tjFree(out);
+    }
+    if (pieces.size() > 65535) return encode_frame(tj, frame, encode_log_);
+
+    const auto us = std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch())
+                        .count();
+    ndbg::ByteWriter payload;
+    payload.u16(frame.width);
+    payload.u16(frame.height);
+    payload.u16(frame.origin_w);
+    payload.u16(frame.origin_h);
+    payload.u32(frame.id);
+    payload.u64(static_cast<uint64_t>(us));
+    payload.u16(static_cast<uint16_t>(pieces.size()));
+    for (const Piece& piece : pieces) {
+      payload.u16(static_cast<uint16_t>(piece.rect.x));
+      payload.u16(static_cast<uint16_t>(piece.rect.y));
+      payload.u16(static_cast<uint16_t>(piece.rect.w));
+      payload.u16(static_cast<uint16_t>(piece.rect.h));
+      payload.u32(static_cast<uint32_t>(piece.jpeg.size()));
+      payload.raw(piece.jpeg.data(), piece.jpeg.size());
+    }
+    if (payload.b.size() > ndbg::kMaxPayload) return encode_frame(tj, frame, encode_log_);
+    return ndbg::pack(ndbg::Tiles, payload);
+  }
+
   void encoder_main() {
     tjhandle tj = tjInitCompress();
     if (!tj) {
@@ -307,7 +395,6 @@ class Connection {
       return;
     }
     uint32_t seen = 0;
-    auto last_log = std::chrono::steady_clock::time_point{};
     while (!stop_.load()) {
       std::shared_ptr<CapturedFrame> frame;
       {
@@ -315,10 +402,45 @@ class Connection {
         cap_cv_.wait(lock, [&] { return stop_.load() || (latest_ && latest_->id != seen); });
         if (stop_.load()) break;
         frame = latest_;
-        seen = frame->id;
       }
-      auto packet = encode_frame(tj, *frame, last_log);
-      if (!packet.empty()) publish_frame(std::move(packet));
+      std::vector<uint8_t> base;
+      int base_w = 0;
+      int base_h = 0;
+      uint8_t base_codec = 0;
+      uint64_t gen = 0;
+      {
+        std::unique_lock<std::mutex> lock(out_mu_);
+        if (inflight_) {
+          out_cv_.wait(lock, [&] { return stop_.load() || !inflight_; });
+          if (stop_.load()) break;
+        }
+        base = base_rgb_;
+        base_w = base_w_;
+        base_h = base_h_;
+        base_codec = base_codec_;
+        gen = base_gen_;
+      }
+      auto packet = build_update(tj, *frame, base, base_w, base_h, base_codec);
+      if (packet.empty()) {
+        seen = frame->id;
+        continue;
+      }
+      {
+        std::unique_lock<std::mutex> lock(out_mu_);
+        if (inflight_) {
+          out_cv_.wait(lock, [&] { return stop_.load() || !inflight_; });
+          continue;
+        }
+        if (base_gen_ != gen) continue;
+        frame_ = std::move(packet);
+        pending_rgb_ = frame->rgb;
+        pending_w_ = frame->width;
+        pending_h_ = frame->height;
+        pending_codec_ = frame->codec;
+        frame_ready_ = true;
+      }
+      seen = frame->id;
+      out_cv_.notify_one();
     }
     tjDestroy(tj);
   }
@@ -370,8 +492,13 @@ class Connection {
     while (!stop_.load()) {
       std::vector<uint8_t> msg;
       bool read_chunk = false;
+      bool took_frame = false;
       size_t chunk_n = 0;
       uint32_t chunk_id = 0;
+      std::vector<uint8_t> sending_rgb;
+      int send_w = 0;
+      int send_h = 0;
+      uint8_t send_codec = 0;
       {
         std::unique_lock<std::mutex> lock(out_mu_);
         out_cv_.wait(lock, [&] { return stop_.load() || !hi_.empty() || frame_ready_ || dl_active_; });
@@ -380,8 +507,20 @@ class Connection {
           msg = std::move(hi_.front());
           hi_.pop_front();
         } else if (frame_ready_) {
+          int queued = 0;
+          if (ioctl(fd_, TIOCOUTQ, &queued) == 0 && queued > 48 * 1024) {
+            lock.unlock();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+          }
           msg = std::move(frame_);
+          sending_rgb = std::move(pending_rgb_);
+          send_w = pending_w_;
+          send_h = pending_h_;
+          send_codec = pending_codec_;
           frame_ready_ = false;
+          inflight_ = true;
+          took_frame = true;
         } else if (dl_active_) {
           if (dl_abort_) {
             dl_in_.close();
@@ -439,9 +578,24 @@ class Connection {
       }
 
       if (!msg.empty() && !write_all(fd_, msg)) {
+        if (took_frame) {
+          std::lock_guard<std::mutex> lock(out_mu_);
+          inflight_ = false;
+        }
+        out_cv_.notify_all();
         request_stop();
         return;
       }
+      if (took_frame) {
+        std::lock_guard<std::mutex> lock(out_mu_);
+        base_rgb_ = std::move(sending_rgb);
+        base_w_ = send_w;
+        base_h_ = send_h;
+        base_codec_ = send_codec;
+        ++base_gen_;
+        inflight_ = false;
+      }
+      if (took_frame) out_cv_.notify_all();
     }
   }
 
@@ -861,6 +1015,8 @@ void tune_socket(int fd) {
   int yes = 1;
   setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &yes, sizeof(yes));
   setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &yes, sizeof(yes));
+  int sndbuf = 256 * 1024;
+  setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &sndbuf, sizeof(sndbuf));
 #ifdef TCP_USER_TIMEOUT
   unsigned int timeout_ms = 20000;
   setsockopt(fd, IPPROTO_TCP, TCP_USER_TIMEOUT, &timeout_ms, sizeof(timeout_ms));

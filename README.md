@@ -2,7 +2,7 @@
 
 局域网远程桌面。Ubuntu 22.04 作为被控端，Windows 作为控制端，双方直连，不经过中转服务器。
 
-被控端是 C++ 服务，登录图形桌面后由 systemd 用户服务启动。控制端是 C# WPF 程序，编译后是一个 `NetDebug.exe`。
+被控端是 C++ 服务，登录图形桌面后由 systemd 用户服务启动。控制端是 Qt 6 程序，界面、会话和协议分开，编译后是 `NetDebug.exe` 以及同目录的 Qt 运行库。
 
 ## 功能
 
@@ -10,6 +10,7 @@
 - 同步文本剪贴板
 - 在左侧目录里浏览远程文件夹，拖放或选择文件双向传输，也可以删除
 - 画面可选 JPEG 或原始 RGB24，并能设置 JPEG 质量、最大宽度和帧率上限
+- 画面没变化时不发送。只有一小块变化时发送这一块，变化很大时仍发送整帧。服务端和这份客户端要一起更新，旧客户端收不到分块画面
 - 同一时间只接受一个客户端
 - 打开客户端后自动在局域网搜索设备。只找到一台时填入地址栏；找到多台时，从地址栏的下拉列表里选择。也可以再点 **搜索**
 
@@ -20,7 +21,7 @@
 | | 要求 |
 | --- | --- |
 | 被控端 | Ubuntu 22.04，登录会话选择 **Ubuntu on Xorg** |
-| 控制端 | Windows x64，[.NET 8 桌面运行时](https://dotnet.microsoft.com/download/dotnet/8.0) |
+| 控制端 | Windows x64。运行时不需要另装 .NET，把编译出的整个目录拷过去即可 |
 
 画面从 Xorg 读取。Wayland 会话里服务可以连上，但桌面是黑的。
 
@@ -58,17 +59,18 @@ download_dir=
 
 ## 下载客户端
 
-Windows 控制端不用自己编译，到 [Releases](https://github.com/Yoimiya-a/NetDebug/releases) 下载对应版本的 `NetDebug.exe`。当前版本是 [v0.2](https://github.com/Yoimiya-a/NetDebug/releases/tag/v0.2)。运行前需要本机已安装 [.NET 8 桌面运行时](https://dotnet.microsoft.com/download/dotnet/8.0)。
+已经发布的 [v0.2](https://github.com/Yoimiya-a/NetDebug/releases/tag/v0.2) 仍是旧的 .NET 版本。当前源码里的控制端改成了 Qt，不再使用 .NET。编译结束会把 Qt 和 MinGW 运行库放到 `NetDebug.exe` 旁边。换一台电脑时要拷贝整个输出目录，不能只拷这一个 exe。对方不用安装 .NET，也不用安装 Qt。
 
 ## 编译控制端
 
-需要改客户端时，在 Windows 上安装 .NET 8 SDK 后：
+需要 Qt 6（Widgets、Network、Concurrent）和 CMake。下面的路径按本机 Qt 安装位置修改：
 
 ```bash
-dotnet build -c Release win11/NetDebug.Client.csproj
+cmake -S win11 -B win11/build -G Ninja -DCMAKE_PREFIX_PATH="C:/Qt/6.7.1/mingw_64"
+cmake --build win11/build
 ```
 
-生成的程序是 `win11/bin/Release/net8.0-windows/NetDebug.exe`。它依赖本机已安装的 .NET 8 桌面运行时。
+生成的程序是 `win11/build/NetDebug.exe`。协议在 `win11/src/protocol`，连接和局域网搜索在 `win11/src/session`，窗口在 `win11/src/ui`。
 
 ## 使用
 
@@ -82,5 +84,5 @@ dotnet build -c Release win11/NetDebug.Client.csproj
 
 ```text
 service/     Ubuntu 服务、安装脚本和 systemd 用户单元
-win11/       Windows 客户端
+win11/       Windows 客户端（Qt）
 ```

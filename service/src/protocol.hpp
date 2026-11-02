@@ -43,6 +43,11 @@
 // FileRequest    客户端→服务端  name_len u16, name。name 同样是相对路径
 // FileDelete     客户端→服务端  name_len u16, name。删除当前目录里的文件或文件夹
 // FileMkdir      客户端→服务端  name_len u16, name。在当前目录里创建文件夹
+// Tiles          服务端→客户端  image_w u16, image_h u16, origin_w u16, origin_h u16,
+//                              frame_id u32, timestamp_us u64, count u16
+//                              重复 count 次：x u16, y u16, w u16, h u16, jpeg_len u32, jpeg
+//                              坐标在缩放后的画面上。客户端贴到已经显示的画面上。
+//                              画质和整帧 JPEG 相同。第一次以及变化范围大时仍发 Frame。
 
 namespace ndbg {
 
@@ -69,6 +74,7 @@ enum Msg : uint8_t {
   FileRequest = 20,
   FileDelete = 21,
   FileMkdir = 22,
+  Tiles = 23,
 };
 
 constexpr uint32_t kMaxPayload = 32u * 1024u * 1024u;
