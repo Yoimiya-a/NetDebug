@@ -1,5 +1,5 @@
 # 安装或更新请运行 service/install.sh。
-# 登录界面请选 Ubuntu on Xorg。登录进桌面后才会有画面。
+# install.sh 会设置开机自动登录 Ubuntu on Xorg。进入桌面后才会有画面。
 # 口令在 ~/.config/netdebug/config.ini ，首次启动会自动生成，默认 netdebug。
 # 若安装前缀不是 /usr/local，请修改下面的 ExecStart。
 

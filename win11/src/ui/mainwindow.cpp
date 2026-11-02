@@ -6,6 +6,7 @@
 #include "ui/screenview.h"
 #include "ui/uploadpicker.h"
 
+#include <QApplication>
 #include <QCheckBox>
 #include <QClipboard>
 #include <QCloseEvent>
@@ -27,6 +28,10 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
+#include <QMouseEvent>
+#include <QMoveEvent>
+#include <QResizeEvent>
+#include <QScreen>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QShowEvent>
@@ -141,6 +146,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         "QWidget { font-family: 'Microsoft YaHei UI', 'Segoe UI'; font-size: 13px; color: #1a1a1a; }"
         "QMainWindow, #chrome { background: #ffffff; }"
         "#toolbar { background: #ffffff; border-bottom: 1px solid #e6e6e6; }"
+        "#bottomBar { background: #ffffff; border-top: 1px solid #e6e6e6; }"
+        "#picturePopup { background: #ffffff; border: 1px solid #d8d8d8; border-radius: 6px; }"
+        "#picturePopup QLabel#bandwidthHint { color: #5c6570; }"
+        "QPushButton#pictureButton:checked { background: #e7f0ff; border-color: #9db7ef; }"
         "#filePanel { background: #ffffff; }"
         "QSplitter#bodySplit::handle { background: #e6e6e6; }"
         "QSplitter#bodySplit::handle:hover { background: #2f6fed; }"
@@ -169,74 +178,57 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     top->setObjectName("toolbar");
     auto* topRow = new QHBoxLayout(top);
     topRow->setContentsMargins(10, 8, 10, 8);
-    topRow->addWidget(new QLabel(zh("地址"), top));
-    m_host = new QComboBox(top);
-    m_host->setEditable(true);
-    m_host->setMinimumWidth(180);
-    m_host->setToolTip(zh("找到一台会自动填入。多台时点开此框选择"));
-    topRow->addWidget(m_host);
-    m_search = new QPushButton(zh("搜索"), top);
-    m_search->setToolTip(zh("在局域网里查找 NetDebug"));
-    topRow->addWidget(m_search);
-    topRow->addWidget(new QLabel(zh("端口"), top));
-    m_port = new QLineEdit(zh("17611"), top);
-    m_port->setFixedWidth(72);
-    topRow->addWidget(m_port);
-    topRow->addWidget(new QLabel(zh("密码"), top));
-    m_password = new QLineEdit(top);
-    m_password->setEchoMode(QLineEdit::Password);
-    m_password->setFixedWidth(120);
-    topRow->addWidget(m_password);
-    m_connect = new QPushButton(zh("连接"), top);
-    m_connect->setObjectName("connectButton");
-    topRow->addWidget(m_connect);
-    m_disconnect = new QPushButton(zh("断开"), top);
-    topRow->addWidget(m_disconnect);
-    m_reconnect = new QCheckBox(zh("断线重连"), top);
-    m_reconnect->setChecked(true);
-    topRow->addWidget(m_reconnect);
+    m_pictureButton = new QPushButton(zh("画面 ▾"), top);
+    m_pictureButton->setObjectName("pictureButton");
+    m_pictureButton->setCheckable(true);
+    m_pictureButton->setToolTip(zh("编码、画质、宽度、帧率和全屏"));
+    topRow->addWidget(m_pictureButton);
     topRow->addStretch();
-    m_latency = new QLabel(zh("延迟 --"), top);
-    m_fps = new QLabel(zh("收帧 --"), top);
-    m_status = new QLabel(zh("未连接"), top);
-    topRow->addWidget(m_latency);
-    topRow->addSpacing(12);
-    topRow->addWidget(m_fps);
-    topRow->addSpacing(12);
-    topRow->addWidget(m_status);
     root->addWidget(top);
 
-    auto* settings = new QWidget(chrome);
-    settings->setObjectName("toolbar");
-    auto* settingsRow = new QHBoxLayout(settings);
-    settingsRow->setContentsMargins(10, 0, 10, 8);
-    settingsRow->addWidget(new QLabel(zh("编码"), settings));
-    m_codec = addChoices(settings, {{"压缩", 0}, {"不压缩", 1}});
-    settingsRow->addWidget(m_codec);
-    settingsRow->addWidget(new QLabel(zh("JPEG 质量"), settings));
-    m_quality = new QSlider(Qt::Horizontal, settings);
+    m_picturePanel = new QFrame(this, Qt::Tool | Qt::FramelessWindowHint);
+    m_picturePanel->setObjectName("picturePopup");
+    m_picturePanel->setFrameShape(QFrame::NoFrame);
+    m_picturePanel->setAttribute(Qt::WA_StyledBackground, true);
+    m_picturePanel->setStyleSheet(styleSheet());
+    m_picturePanel->setFixedWidth(320);
+    m_picturePanel->hide();
+    auto* picture = new QGridLayout(m_picturePanel);
+    picture->setContentsMargins(12, 10, 12, 10);
+    picture->setHorizontalSpacing(10);
+    picture->setVerticalSpacing(8);
+    picture->setColumnStretch(1, 1);
+    auto addPictureRow = [&](int row, const char* name, QWidget* field) {
+        picture->addWidget(new QLabel(zh(name), m_picturePanel), row, 0);
+        picture->addWidget(field, row, 1);
+    };
+    m_codec = addChoices(m_picturePanel, {{"压缩", 0}, {"不压缩", 1}});
+    addPictureRow(0, "编码", m_codec);
+    m_quality = new QSlider(Qt::Horizontal, m_picturePanel);
     m_quality->setRange(1, 100);
     m_quality->setValue(30);
-    m_quality->setFixedWidth(140);
-    settingsRow->addWidget(m_quality);
-    m_qualityText = new QLabel(zh("30"), settings);
+    m_qualityText = new QLabel(zh("30"), m_picturePanel);
     m_qualityText->setFixedWidth(28);
-    settingsRow->addWidget(m_qualityText);
-    settingsRow->addWidget(new QLabel(zh("最大宽度"), settings));
-    m_width = addChoices(settings, {{"640", 640}, {"960", 960}, {"1280", 1280}, {"1600", 1600}, {"与桌面同宽", 0}});
+    auto* qualityWrap = new QWidget(m_picturePanel);
+    auto* qualityRow = new QHBoxLayout(qualityWrap);
+    qualityRow->setContentsMargins(0, 0, 0, 0);
+    qualityRow->setSpacing(6);
+    qualityRow->addWidget(m_quality, 1);
+    qualityRow->addWidget(m_qualityText);
+    addPictureRow(1, "JPEG 质量", qualityWrap);
+    m_width = addChoices(m_picturePanel, {{"640", 640}, {"960", 960}, {"1280", 1280}, {"1600", 1600}, {"与桌面同宽", 0}});
     m_width->setCurrentIndex(2);
-    settingsRow->addWidget(m_width);
-    settingsRow->addWidget(new QLabel(zh("帧率上限"), settings));
-    m_fpsLimit = addChoices(settings, {{"10", 10}, {"15", 15}, {"20", 20}, {"30", 30}});
+    addPictureRow(2, "最大宽度", m_width);
+    m_fpsLimit = addChoices(m_picturePanel, {{"10", 10}, {"15", 15}, {"20", 20}, {"30", 30}});
     m_fpsLimit->setCurrentIndex(3);
-    settingsRow->addWidget(m_fpsLimit);
-    m_bandwidth = new QLabel(settings);
-    settingsRow->addWidget(m_bandwidth);
-    settingsRow->addStretch();
-    m_fullScreen = new QPushButton(zh("全屏"), settings);
-    m_fullScreen->setToolTip(zh("展开画面并收起左侧目录"));
-    settingsRow->addWidget(m_fullScreen);
-    root->addWidget(settings);
+    addPictureRow(3, "帧率上限", m_fpsLimit);
+    m_bandwidth = new QLabel(m_picturePanel);
+    m_bandwidth->setObjectName("bandwidthHint");
+    m_bandwidth->setWordWrap(true);
+    picture->addWidget(m_bandwidth, 4, 0, 1, 2);
+    m_fullScreen = new QPushButton(zh("全屏"), m_picturePanel);
+    m_fullScreen->setToolTip(zh("收起左侧目录和下边栏"));
+    picture->addWidget(m_fullScreen, 5, 0, 1, 2, Qt::AlignLeft);
 
     m_filePanel = new QWidget(chrome);
     m_filePanel->setObjectName("filePanel");
@@ -302,6 +294,53 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     m_split->setStretchFactor(1, 1);
     m_split->setSizes({m_filePanelWidth, 860});
     root->addWidget(m_split, 1);
+
+    m_bottomBar = new QWidget(chrome);
+    m_bottomBar->setObjectName("bottomBar");
+    auto* bottom = m_bottomBar;
+    auto* bottomRow = new QHBoxLayout(bottom);
+    bottomRow->setContentsMargins(10, 8, 10, 8);
+    bottomRow->addWidget(new QLabel(zh("地址"), bottom));
+    m_host = new QComboBox(bottom);
+    m_host->setEditable(true);
+    m_host->setMinimumWidth(180);
+    m_host->setMaximumWidth(260);
+    m_host->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+    m_host->setToolTip(zh("找到一台会自动填入。多台时点开此框选择"));
+    bottomRow->addWidget(m_host);
+    m_search = new QPushButton(zh("搜索"), bottom);
+    m_search->setToolTip(zh("在局域网里查找 NetDebug"));
+    bottomRow->addWidget(m_search);
+    bottomRow->addWidget(new QLabel(zh("端口"), bottom));
+    m_port = new QLineEdit(zh("17611"), bottom);
+    m_port->setFixedWidth(72);
+    bottomRow->addWidget(m_port);
+    bottomRow->addWidget(new QLabel(zh("密码"), bottom));
+    m_password = new QLineEdit(bottom);
+    m_password->setEchoMode(QLineEdit::Password);
+    m_password->setFixedWidth(120);
+    bottomRow->addWidget(m_password);
+    m_connect = new QPushButton(zh("连接"), bottom);
+    m_connect->setObjectName("connectButton");
+    bottomRow->addWidget(m_connect);
+    m_disconnect = new QPushButton(zh("断开"), bottom);
+    bottomRow->addWidget(m_disconnect);
+    m_reconnect = new QCheckBox(zh("断线重连"), bottom);
+    m_reconnect->setChecked(true);
+    bottomRow->addWidget(m_reconnect);
+    m_statusGroup = new QWidget(bottom);
+    auto* statusRow = new QHBoxLayout(m_statusGroup);
+    statusRow->setContentsMargins(16, 0, 0, 0);
+    statusRow->setSpacing(12);
+    m_latency = new QLabel(zh("延迟 --"), m_statusGroup);
+    m_fps = new QLabel(zh("收帧 --"), m_statusGroup);
+    m_status = new QLabel(zh("未连接"), m_statusGroup);
+    statusRow->addWidget(m_latency);
+    statusRow->addWidget(m_fps);
+    statusRow->addWidget(m_status);
+    bottomRow->addWidget(m_statusGroup);
+    bottomRow->addStretch(1);
+    root->addWidget(bottom);
     setCentralWidget(chrome);
 
     m_settingsTimer = new QTimer(this);
@@ -364,7 +403,16 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
         const proto::StreamSettings settings = readSettings();
         postSession([session = m_session, settings] { session->updateSettings(settings); });
     });
-    connect(m_fullScreen, &QPushButton::clicked, this, &MainWindow::toggleFilePanel);
+    connect(m_pictureButton, &QPushButton::toggled, this, [this](bool on) {
+        m_pictureButton->setText(on ? zh("画面 ▴") : zh("画面 ▾"));
+        if (!on) {
+            m_picturePanel->hide();
+            return;
+        }
+        placePictureMenu();
+        m_picturePanel->show();
+        m_picturePanel->raise();
+    });
     connect(m_open, &QPushButton::clicked, this, &MainWindow::openTypedDirectory);
     connect(m_remotePath, &QLineEdit::returnPressed, this, &MainWindow::openTypedDirectory);
     connect(m_remotePath, &QLineEdit::textEdited, this, [this] { if (m_keyboard) releaseKeyboard(); });
@@ -384,12 +432,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this, &MainWindow::readLocalClipboard);
     m_tree->installEventFilter(this);
 
+    QCoreApplication::instance()->installEventFilter(this);
+
     m_uiReady = true;
     updateBandwidth();
     updateUi();
 }
 
 MainWindow::~MainWindow() {
+    if (QCoreApplication::instance()) QCoreApplication::instance()->removeEventFilter(this);
     shutdownThreads();
     closeDownload(false);
 }
@@ -406,6 +457,31 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     shutdownThreads();
     closeDownload(true);
     QMainWindow::closeEvent(event);
+}
+
+void MainWindow::resizeEvent(QResizeEvent* event) {
+    QMainWindow::resizeEvent(event);
+    if (m_picturePanel && m_picturePanel->isVisible()) placePictureMenu();
+}
+
+void MainWindow::moveEvent(QMoveEvent* event) {
+    QMainWindow::moveEvent(event);
+    if (m_picturePanel && m_picturePanel->isVisible()) placePictureMenu();
+}
+
+void MainWindow::placePictureMenu() {
+    if (!m_picturePanel || !m_pictureButton) return;
+    m_picturePanel->adjustSize();
+    QPoint pos = m_pictureButton->mapToGlobal(QPoint(0, m_pictureButton->height() + 4));
+    if (QScreen* screen = m_pictureButton->screen()) {
+        const QRect area = screen->availableGeometry();
+        const int maxX = area.right() - m_picturePanel->width() + 1;
+        const int maxY = area.bottom() - m_picturePanel->height() + 1;
+        pos.setX(qBound(area.left(), pos.x(), qMax(area.left(), maxX)));
+        if (pos.y() > maxY) pos.setY(qMax(area.top(), maxY));
+    }
+    m_picturePanel->move(pos);
+    m_picturePanel->raise();
 }
 
 void MainWindow::shutdownThreads() {
@@ -484,17 +560,44 @@ void MainWindow::applySettings() {
     m_settingsTimer->start();
 }
 
-void MainWindow::toggleFilePanel() {
-    const bool visible = m_filePanel->isVisible();
-    if (visible) {
-        m_filePanelWidth = qMax(m_filePanel->width(), m_filePanel->minimumWidth());
-        m_filePanel->hide();
+void MainWindow::placeStatus(bool onTop) {
+    if (!m_statusGroup || !m_pictureButton || !m_bottomBar) return;
+    auto* topRow = qobject_cast<QHBoxLayout*>(m_pictureButton->parentWidget()->layout());
+    auto* bottomRow = qobject_cast<QHBoxLayout*>(m_bottomBar->layout());
+    if (!topRow || !bottomRow) return;
+    topRow->removeWidget(m_statusGroup);
+    bottomRow->removeWidget(m_statusGroup);
+    if (onTop) {
+        topRow->addWidget(m_statusGroup);
+    } else if (bottomRow->count() > 0) {
+        bottomRow->insertWidget(bottomRow->count() - 1, m_statusGroup);
     } else {
-        m_filePanel->show();
-        const int total = qMax(m_split->width(), m_filePanelWidth + m_screen->minimumWidth());
-        m_split->setSizes({m_filePanelWidth, total - m_filePanelWidth});
+        bottomRow->addWidget(m_statusGroup);
     }
-    m_fullScreen->setText(visible ? zh("退出全屏") : zh("全屏"));
+    m_statusGroup->show();
+}
+
+void MainWindow::toggleFilePanel() {
+    m_immersive = !m_immersive;
+    if (m_immersive) {
+        m_filePanelWidth = qMax(m_filePanel->width(), m_filePanel->minimumWidth());
+        m_filePanel->setMinimumWidth(0);
+        m_split->setChildrenCollapsible(true);
+        placeStatus(true);
+        m_filePanel->hide();
+        m_bottomBar->hide();
+        m_split->setSizes({0, qMax(1, m_split->width())});
+    } else {
+        m_filePanel->setMinimumWidth(180);
+        m_filePanel->show();
+        m_bottomBar->show();
+        placeStatus(false);
+        m_split->setChildrenCollapsible(false);
+        const int total = qMax(m_split->width(), m_filePanelWidth + m_screen->minimumWidth());
+        m_split->setSizes({m_filePanelWidth, qMax(1, total - m_filePanelWidth)});
+    }
+    m_fullScreen->setText(m_immersive ? zh("退出全屏") : zh("全屏"));
+    m_fullScreen->setToolTip(m_immersive ? zh("展开左侧目录和下边栏") : zh("收起左侧目录和下边栏"));
 }
 
 proto::StreamSettings MainWindow::readSettings() const {
@@ -538,6 +641,7 @@ void MainWindow::updateBandwidth() {
     if (m_originWidth == 0) text += zh("（按 1920×1080 估算）");
     if (warn) text += zh("，可能超过百兆");
     m_bandwidth->setText(text);
+    if (m_picturePanel && m_picturePanel->isVisible()) placePictureMenu();
 }
 
 void MainWindow::updateUi() {
@@ -1101,6 +1205,36 @@ void MainWindow::closeDownload(bool deletePartial) {
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event) {
+    if (event->type() == QEvent::MouseButtonRelease && m_swallowMouseRelease) {
+        m_swallowMouseRelease = false;
+        return true;
+    }
+    if (m_picturePanel && m_picturePanel->isVisible() && qobject_cast<QWidget*>(watched)) {
+        if (event->type() == QEvent::KeyPress) {
+            auto* key = static_cast<QKeyEvent*>(event);
+            if (key->key() == Qt::Key_Escape && !key->isAutoRepeat()) {
+                m_pictureButton->setChecked(false);
+                return true;
+            }
+        } else if (event->type() == QEvent::MouseButtonPress) {
+            const QPoint global = static_cast<QMouseEvent*>(event)->globalPosition().toPoint();
+            auto hits = [global](QWidget* widget) {
+                return widget && widget->isVisible() && widget->rect().contains(widget->mapFromGlobal(global));
+            };
+            if (hits(m_fullScreen)) {
+                toggleFilePanel();
+                m_swallowMouseRelease = true;
+                m_pictureButton->setChecked(false);
+                return true;
+            }
+            bool inside = hits(m_picturePanel) || hits(m_pictureButton);
+            for (auto* widget = static_cast<QWidget*>(watched); widget && !inside; widget = widget->parentWidget()) {
+                if (widget == m_picturePanel || widget == m_pictureButton) inside = true;
+            }
+            QWidget* popup = QApplication::activePopupWidget();
+            if (!inside && !(popup && hits(popup))) m_pictureButton->setChecked(false);
+        }
+    }
     if (watched == m_tree && event->type() == QEvent::FocusIn && m_keyboard) releaseKeyboard();
     if (watched == m_tree && event->type() == QEvent::KeyPress) {
         auto* key = static_cast<QKeyEvent*>(event);

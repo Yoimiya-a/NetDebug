@@ -17,9 +17,12 @@ class QCheckBox;
 class QComboBox;
 class QEventLoop;
 class QFile;
+class QFrame;
 class QLabel;
 class QLineEdit;
+class QMoveEvent;
 class QPushButton;
+class QResizeEvent;
 class QSlider;
 class QSplitter;
 class QThread;
@@ -36,6 +39,8 @@ public:
 protected:
     void showEvent(QShowEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
+    void resizeEvent(QResizeEvent* event) override;
+    void moveEvent(QMoveEvent* event) override;
     bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
@@ -88,6 +93,8 @@ private:
     void updateBandwidth();
     void notePicture(int originWidth, int originHeight);
     void updateUi();
+    void placePictureMenu();
+    void placeStatus(bool onTop);
     void releaseKeyboard();
     void sendKey(quint32 virtualKey, bool down);
     void readLocalClipboard();
@@ -118,6 +125,7 @@ private:
     QLabel* m_latency = nullptr;
     QLabel* m_fps = nullptr;
     QLabel* m_status = nullptr;
+    QWidget* m_statusGroup = nullptr;
     QComboBox* m_codec = nullptr;
     QSlider* m_quality = nullptr;
     QLabel* m_qualityText = nullptr;
@@ -125,7 +133,12 @@ private:
     QComboBox* m_fpsLimit = nullptr;
     QLabel* m_bandwidth = nullptr;
     QPushButton* m_fullScreen = nullptr;
+    QPushButton* m_pictureButton = nullptr;
+    QFrame* m_picturePanel = nullptr;
+    QWidget* m_bottomBar = nullptr;
     QWidget* m_filePanel = nullptr;
+    bool m_immersive = false;
+    bool m_swallowMouseRelease = false;
     QSplitter* m_split = nullptr;
     int m_filePanelWidth = 300;
     QLineEdit* m_remotePath = nullptr;
